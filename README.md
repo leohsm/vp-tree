@@ -26,7 +26,10 @@ examples/exemplo.c    programa de exemplo (demonstração guiada + modo interati
 tests/teste.c         testes automatizados
 Makefile              compilação com make
 compilar.bat          compilação no Windows sem make
+docs/                 relatório (vp_tree_doc.pdf e vp_tree_doc.docx)
 ```
+
+O relatório completo está em [`docs/vp_tree_doc.pdf`](docs/vp_tree_doc.pdf) (também em [.docx](docs/vp_tree_doc.docx)).
 
 ## Como rodar
 

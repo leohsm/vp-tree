@@ -5,3 +5,5 @@ exemplo
 teste_vp
 *.pdf
 *.docx
+!docs/*.pdf
+!docs/*.docx
