@@ -313,6 +313,111 @@ static void teste_palavras(void)
     vp_destruir(t);
 }
 
+/* ---- empates: distancias repetidas na fronteira da mediana ---- */
+
+static void teste_empates(void)
+{
+    /* (a) 2000 pontos identicos: todas as distancias sao 0 */
+    {
+        static P2 iguais[2000];
+        const void *pts[2000];
+        size_t i;
+        VPTree *t = vp_criar(dist2, NULL, VP_ESCOLHA_PRIMEIRO);
+        for (i = 0; i < 2000; i++) {
+            iguais[i].x = 1.0;
+            iguais[i].y = 1.0;
+            pts[i] = &iguais[i];
+        }
+        CHECAR(vp_construir(t, pts, 2000) && vp_valida(t));
+        CHECAR(vp_altura(t) == 11);                 /* ceil(log2(2001)) */
+        for (i = 0; i < 2000; i++) {
+            P2 q = {1.0, 1.0};
+            const void *rem = NULL;
+            CHECAR(vp_remover(t, &q, &rem) && rem != NULL);
+            if (i % 250 == 0)
+                CHECAR(vp_valida(t) && vp_tamanho(t) == 2000 - i - 1);
+        }
+        CHECAR(vp_vazia(t));
+        vp_destruir(t);
+    }
+
+    /* (b) centro + 12 pontos inteiros a distancia exatamente 5 */
+    {
+        static P2 c[13] = {{0, 0}, {5, 0}, {4, 3}, {3, 4}, {0, 5}, {-3, 4}, {-4, 3},
+                           {-5, 0}, {-4, -3}, {-3, -4}, {0, -5}, {3, -4}, {4, -3}};
+        const void *pts[13], *res[13];
+        P2 centro = {0, 0};
+        size_t i;
+        VPTree *t = vp_criar(dist2, NULL, VP_ESCOLHA_PRIMEIRO);
+        for (i = 0; i < 13; i++)
+            pts[i] = &c[i];
+        CHECAR(vp_construir(t, pts, 13) && vp_valida(t));
+        CHECAR(t->raiz->mu == 5.0);
+        CHECAR(vp_altura(t) == 4);                  /* 12 -> 6 + 6, nao 0 + 12 */
+        for (i = 0; i < 13; i++)
+            CHECAR(vp_buscar_exato(t, &c[i], NULL) == &c[i]);
+        CHECAR(vp_buscar_faixa(t, &centro, 5.0, res, 13, NULL) == 13);
+        CHECAR(vp_buscar_faixa(t, &centro, 4.999, res, 13, NULL) == 1);
+        vp_destruir(t);
+    }
+
+    /* (c) grade 12x12: muitas distancias iguais, raios inteiros na fronteira */
+    {
+        static P2 grade[144];
+        const void *pts[144], *res[144], *viz[6];
+        P2 *ativos[144];
+        double ds[6], ref[144];
+        size_t n = 144, i, j, rodada;
+        int e;
+
+        for (e = 0; e < 3; e++) {
+            VPTree *t = vp_criar(dist2, NULL, (VPEscolha)e);
+            for (i = 0; i < 144; i++) {
+                grade[i].x = (double)(i % 12);
+                grade[i].y = (double)(i / 12);
+                pts[i] = &grade[i];
+                ativos[i] = &grade[i];
+            }
+            n = 144;
+            CHECAR(vp_construir(t, pts, n) && vp_valida(t) && vp_altura(t) == 8);
+            for (rodada = 0; rodada < 144; rodada++) {
+                P2 q;
+                size_t k, cont;
+                double r = (double)aleatorio(6);
+                q.x = (double)aleatorio(14) - 1;
+                q.y = (double)aleatorio(14) - 1;
+                for (i = 0; i < n; i++)
+                    ref[i] = dist2(&q, ativos[i]);
+                qsort(ref, n, sizeof ref[0], cmp_double);
+                for (cont = 0; cont < n && ref[cont] <= r; cont++)
+                    ;
+                CHECAR(vp_buscar_faixa(t, &q, r, res, 144, NULL) == cont);
+                k = vp_k_vizinhos(t, &q, 6, viz, ds, NULL);
+                for (j = 0; j < k; j++)
+                    CHECAR(PERTO(ds[j], ref[j]));
+                for (j = 0; j < n; j++)
+                    CHECAR(vp_buscar_exato(t, ativos[j], NULL) == ativos[j]);
+                /* remove um ponto aleatorio e, as vezes, o reinsere */
+                j = (size_t)aleatorio((int)n);
+                {
+                    const void *rem = NULL;
+                    P2 *p = ativos[j];
+                    CHECAR(vp_remover(t, p, &rem) && rem == p);
+                    if (aleatorio(2)) {
+                        CHECAR(vp_inserir(t, p));
+                    } else {
+                        ativos[j] = ativos[--n];
+                    }
+                }
+                CHECAR(vp_tamanho(t) == n && vp_valida(t));
+                if (n == 0)
+                    break;
+            }
+            vp_destruir(t);
+        }
+    }
+}
+
 /* ---- arvore degenerada: insercoes em linha reta ---- */
 
 static void teste_degenerada(void)
@@ -351,6 +456,7 @@ int main(void)
     teste_aleatorio(VP_ESCOLHA_ALEATORIA);
     teste_aleatorio(VP_ESCOLHA_DISPERSAO);
     teste_palavras();
+    teste_empates();
     teste_degenerada();
 
     printf("%d verificacoes, %d falha(s)\n", verificacoes, falhas);

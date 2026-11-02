@@ -224,7 +224,7 @@ static VPNo *construir_rec(Construtor *c, Item *itens, size_t n, int nivel)
     FILE *r = t->rastro;
     VPNo *no;
     Item *resto;
-    size_t m, i, nin, pos;
+    size_t m, i, nin, pos, menores, empates_in, vagas;
 
     if (n == 0 || c->erro)
         return NULL;
@@ -261,14 +261,40 @@ static VPNo *construir_rec(Construtor *c, Item *itens, size_t n, int nivel)
     }
     no->mu = mediana(c->ds, m);
 
-    /* Particao estavel: S_in (d < mu) seguido de S_out (d >= mu),
-     * mantendo a ordem original dentro de cada parte. */
+    /* Particao estavel (mantem a ordem original dentro de cada parte):
+     * d < mu vai para S_in e d > mu para S_out. Os empates na fronteira
+     * (d == mu) completam S_in ate floor(m/2) elementos e o restante vai
+     * para S_out. Sem isso, distancias repetidas (ex.: todas iguais)
+     * mandariam tudo para o mesmo lado e a arvore degeneraria. */
+    menores = 0;
+    for (i = 0; i < m; i++)
+        if (resto[i].d < no->mu) menores++;
+    /* como mu e a mediana, menores <= m/2 */
+    empates_in = m / 2 > menores ? m / 2 - menores : 0;
+
+    /* 1a passada: S_in (d < mu e os primeiros 'empates_in' empates) */
     nin = 0;
-    for (i = 0; i < m; i++)
-        if (resto[i].d < no->mu) c->aux[nin++] = resto[i];
+    vagas = empates_in;
+    for (i = 0; i < m; i++) {
+        if (resto[i].d < no->mu) {
+            c->aux[nin++] = resto[i];
+        } else if (resto[i].d == no->mu && vagas > 0) {
+            vagas--;
+            c->aux[nin++] = resto[i];
+        }
+    }
+    /* 2a passada: S_out (d > mu e os empates restantes), mesma decisao */
     pos = nin;
-    for (i = 0; i < m; i++)
-        if (!(resto[i].d < no->mu)) c->aux[pos++] = resto[i];
+    vagas = empates_in;
+    for (i = 0; i < m; i++) {
+        if (resto[i].d < no->mu)
+            continue;
+        if (resto[i].d == no->mu && vagas > 0) {
+            vagas--;
+            continue;
+        }
+        c->aux[pos++] = resto[i];
+    }
     memcpy(resto, c->aux, m * sizeof *resto);
 
     if (r != NULL) {
@@ -451,12 +477,54 @@ static bool coletar_descendentes(const VPNo *alvo, Vetor *pontos)
     return ok;
 }
 
+/* Busca exata (raio 0), usada por vp_buscar_exato e vp_remover.
+ * Retorna o endereco do ponteiro que aponta para o no que contem x
+ * (ou um endereco cujo conteudo e NULL, se x nao existir).
+ * Em geral percorre um unico caminho: d < mu desce pelo interno e
+ * d > mu pelo externo. So quando d == mu (empate exato na fronteira)
+ * o ponto pode estar em qualquer um dos lados, e os dois sao verificados. */
+static VPNo **localizar(const VPTree *t, VPNo **link, const void *x, size_t *calc, int nivel)
+{
+    FILE *r = t->rastro;
+
+    while (*link != NULL) {
+        VPNo *no = *link;
+        double d = t->dist(no->ponto, x);
+        (*calc)++;
+        if (r != NULL) {
+            recuo(r, nivel);
+            fputs("visita ", r);
+            imprimir_ponto(t, no->ponto, r);
+            if (d == 0.0)
+                fputs(": d = 0  ->  encontrado\n", r);
+            else if (d == no->mu)
+                fprintf(r, ": d = mu = %.2f  ->  empate: verifica os dois lados\n", d);
+            else
+                fprintf(r, ": d = %.2f %s mu = %.2f  ->  %s\n", d, d < no->mu ? "<" : ">",
+                        no->mu, d < no->mu ? "interno" : "externo");
+        }
+        if (d == 0.0)
+            return link;
+        if (d < no->mu) {
+            link = &no->interno;
+        } else if (d > no->mu) {
+            link = &no->externo;
+        } else {
+            VPNo **achou = localizar(t, &no->interno, x, calc, nivel + 1);
+            if (*achou != NULL)
+                return achou;
+            link = &no->externo;
+        }
+    }
+    return link;
+}
+
 bool vp_remover(VPTree *t, const void *ponto, const void **removido)
 {
     FILE *r;
     VPNo **link, *alvo, *nova;
     Vetor pontos = {NULL, 0, 0};
-    double d;
+    size_t calc = 0;
     bool erro;
 
     if (t == NULL)
@@ -468,24 +536,8 @@ bool vp_remover(VPTree *t, const void *ponto, const void **removido)
         fputs(")\n", r);
     }
 
-    /* 1. Localizar o no (busca exata: um unico caminho) */
-    link = &t->raiz;
-    while (*link != NULL) {
-        VPNo *no = *link;
-        d = t->dist(no->ponto, ponto);
-        if (r != NULL) {
-            fputs("  visita ", r);
-            imprimir_ponto(t, no->ponto, r);
-            if (d == 0.0)
-                fputs(": d = 0  ->  encontrado\n", r);
-            else
-                fprintf(r, ": d = %.2f %s mu = %.2f  ->  %s\n", d, d < no->mu ? "<" : ">=",
-                        no->mu, d < no->mu ? "interno" : "externo");
-        }
-        if (d == 0.0)
-            break;
-        link = d < no->mu ? &no->interno : &no->externo;
-    }
+    /* 1. Localizar o no (busca exata) */
+    link = localizar(t, &t->raiz, ponto, &calc, 1);
     if (*link == NULL) {
         if (r != NULL) fputs("  ponto nao encontrado\n", r);
         return false;
@@ -527,21 +579,20 @@ bool vp_remover(VPTree *t, const void *ponto, const void **removido)
 
 const void *vp_buscar_exato(const VPTree *t, const void *ponto, size_t *calculos)
 {
-    const VPNo *no;
     size_t c = 0;
     const void *achado = NULL;
 
     if (t != NULL) {
-        no = t->raiz;
-        while (no != NULL) {
-            double d = t->dist(no->ponto, ponto);
-            c++;
-            if (d == 0.0) {
-                achado = no->ponto;
-                break;
-            }
-            no = d < no->mu ? no->interno : no->externo;
+        /* localizar nao altera a arvore; o cast so reaproveita a funcao */
+        VPNo **link;
+        if (t->rastro != NULL) {
+            fputs("BuscarExato(", t->rastro);
+            imprimir_ponto(t, ponto, t->rastro);
+            fputs(")\n", t->rastro);
         }
+        link = localizar(t, (VPNo **)&t->raiz, ponto, &c, 1);
+        if (*link != NULL)
+            achado = (*link)->ponto;
     }
     if (calculos != NULL)
         *calculos = c;
@@ -753,11 +804,11 @@ static void faixa_rec(BuscaFaixa *b, const VPNo *no, int nivel)
     if (eh_folha(no))
         return;
 
-    if (d - b->raio < no->mu)             /* bola de busca toca o interior */
+    if (d - b->raio <= no->mu)            /* bola de busca toca o interior */
         faixa_rec(b, no->interno, nivel + 1);
     else if (r != NULL && no->interno != NULL) {
         recuo(r, nivel + 1);
-        fprintf(r, "poda: interno (d - r = %.2f >= mu = %.2f)\n", d - b->raio, no->mu);
+        fprintf(r, "poda: interno (d - r = %.2f > mu = %.2f)\n", d - b->raio, no->mu);
     }
     if (d + b->raio >= no->mu)            /* bola de busca toca o exterior */
         faixa_rec(b, no->externo, nivel + 1);
@@ -830,7 +881,7 @@ static bool lado_correto(const VPTree *t, const void *vp, double mu, const VPNo 
     if (sub == NULL)
         return true;
     d = t->dist(vp, sub->ponto);
-    if (interno ? !(d < mu) : !(d >= mu))
+    if (interno ? !(d <= mu) : !(d >= mu))    /* empates (d == mu) valem dos dois lados */
         return false;
     return lado_correto(t, vp, mu, sub->interno, interno) &&
            lado_correto(t, vp, mu, sub->externo, interno);

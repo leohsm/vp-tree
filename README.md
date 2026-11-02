@@ -201,7 +201,7 @@ vp_destruir(t);                                    /* não libera os pontos     
 | Função | Descrição | Complexidade |
 |---|---|---|
 | `vp_criar` / `vp_destruir` / `vp_limpar` | cria, libera, esvazia (os pontos são do usuário) | O(1) / O(n) / O(n) |
-| `vp_construir(t, pontos, n)` | constrói a árvore balanceada (μ = mediana, *quickselect*) | O(n log n) |
+| `vp_construir(t, pontos, n)` | constrói a árvore balanceada (μ = mediana, *quickselect*, empates distribuídos) | O(n log n) esperado |
 | `vp_inserir(t, x)` | desce guiada por μ; a folha alcançada recebe μ = d e x vira filho externo | O(log n), pior O(n) |
 | `vp_remover(t, x, &removido)` | localiza o nó e reconstrói sua subárvore com os descendentes | O(log n + m log m) |
 | `vp_buscar_exato(t, x, &calc)` | busca com raio 0: um único caminho | O(log n), pior O(n) |
@@ -234,7 +234,8 @@ static VPNo *construir_rec(Construtor *c, Item *itens, size_t n, int nivel)
         resto[i].d = c->ds[i] = t->dist(no->ponto, resto[i].p);
     no->mu = mediana(c->ds, m);                   /* quickselect, O(m) */
 
-    /* partição estável: S_in (d < mu) seguido de S_out (d >= mu) */
+    /* partição estável: d < mu -> S_in, d > mu -> S_out;
+       empates (d == mu) completam S_in até floor(m/2) elementos */
     ...
     no->interno = construir_rec(c, resto, nin, nivel + 1);
     no->externo = construir_rec(c, resto + nin, m - nin, nivel + 1);
@@ -244,7 +245,7 @@ static VPNo *construir_rec(Construtor *c, Item *itens, size_t n, int nivel)
 
 ## Testes
 
-`make teste` executa mais de 259 mil verificações:
+`make teste` executa mais de 311 mil verificações:
 
 - exemplos do relatório (forma exata da árvore e valores de μ após construção, inserção e remoção; busca de Q(4,4)
   com exatamente 4 cálculos de distância);
@@ -252,6 +253,8 @@ static VPNo *construir_rec(Construtor *c, Item *itens, size_t n, int nivel)
 - 6 mil operações aleatórias para cada estratégia de escolha do vp, comparando vizinho mais próximo, k vizinhos e
   busca por faixa com uma busca exaustiva, e validando a propriedade de partição de todos os nós;
 - palavras com distância de Levenshtein comparadas com busca exaustiva;
+- empates na fronteira: 2000 pontos idênticos (altura 11, e não 2000), 12 pontos à mesma distância do vp e uma
+  grade 12×12 com raios inteiros exatamente sobre as fronteiras, com inserções e remoções;
 - árvore degenerada com 20 mil nós (inserções em linha reta) que volta a ficar balanceada ao remover a raiz.
 
 Os testes também passam com `-fsanitize=address,undefined`.
@@ -259,7 +262,16 @@ Os testes também passam com `-fsanitize=address,undefined`.
 ## Observações
 
 - A árvore não copia nem libera os pontos: `vp_remover` devolve o ponteiro removido para o chamador liberar, se quiser.
-- Um ponto é identificado pela distância 0 (`d(x, y) = 0` se e somente se `x = y` em uma métrica).
+- **Empates na mediana:** se várias distâncias forem iguais a μ, uma regra rígida (`d < μ` interno, `d ≥ μ` externo)
+  mandaria todas para o mesmo lado e degeneraria a árvore (ex.: pontos duplicados ou distâncias inteiras). Na
+  construção, os elementos com `d == μ` completam a subárvore interna até ⌊m/2⌋ elementos, então cada nó divide
+  seus elementos em ⌊m/2⌋ e ⌈m/2⌉ e a altura é sempre ⌈log₂(n + 1)⌉. Por isso, a subárvore interna contém
+  `d ≤ μ` e a externa `d ≥ μ`; a busca exata verifica os dois lados apenas em um empate exato `d == μ`.
+- Um ponto é identificado pela distância 0 (`d(x, y) = 0` se e somente se `x = y` em uma métrica). Com `double`,
+  isso pressupõe que a função de distância devolva exatamente 0 para pontos iguais (vale para a euclidiana com as
+  mesmas coordenadas e para métricas inteiras); funções com erro de arredondamento podem precisar de tolerância.
+- A função de distância precisa ser uma **métrica** (em especial, respeitar a desigualdade triangular). A
+  similaridade de cosseno, por exemplo, não é; use a distância angular ou a euclidiana entre vetores normalizados.
 - `vp_construir`, `vp_inserir`, `vp_buscar_exato`, `vp_remover` e `vp_destruir` não estouram a pilha em árvores
   degeneradas. As buscas por vizinhos e por faixa, `vp_imprimir`, `vp_valida` e `vp_altura` são recursivas, com
   profundidade igual à altura da árvore; depois de muitas inserções, use `vp_construir` para rebalancear.

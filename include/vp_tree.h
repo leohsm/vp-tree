@@ -4,10 +4,15 @@
  * VP-Tree - Yianilos, 1993 (metric trees: Uhlmann, 1991).
  * Arvore binaria para busca por similaridade em espacos metricos gerais.
  * Cada no guarda um ponto de vantagem (vp) e um raio mu:
- *   - subarvore interna: elementos x com d(vp, x) <  mu
- *   - subarvore externa: elementos x com d(vp, x) >= mu
+ *   - subarvore interna: elementos x com d(vp, x) < mu
+ *   - subarvore externa: elementos x com d(vp, x) > mu
+ *   - elementos exatamente na fronteira (d == mu) podem ficar em qualquer
+ *     lado: a construcao os usa para equilibrar as metades e a insercao
+ *     os envia para a externa.
  * Na construcao, mu e a mediana das distancias (media dos dois valores
- * centrais quando a quantidade e par), o que deixa a arvore balanceada.
+ * centrais quando a quantidade e par) e os empates na fronteira sao
+ * distribuidos, entao cada no divide seus m elementos em floor(m/2) e
+ * ceil(m/2), mesmo com distancias repetidas: altura = ceil(log2(n+1)).
  *
  * A biblioteca nao conhece o tipo dos pontos: eles sao ponteiros
  * (const void *) do usuario, comparados apenas pela funcao de distancia,
@@ -15,9 +20,11 @@
  * triangular). Os pontos nao sao copiados nem liberados pela arvore.
  *
  * Complexidade (arvore construida pela mediana):
- *   construir                    : O(n log n)
+ *   construir                    : O(n log n) esperado (quickselect);
+ *                                  pior caso O(n^2)
  *   inserir / buscar_exato       : O(log n)        (pior caso: O(n))
- *   remover (reconstroi subarv.) : O(log n + m log m), m = tam. da subarvore
+ *   remover (reconstroi subarv.) : O(log n + m log m), m = tam. da subarvore;
+ *                                  pior caso herda o da construcao
  *   vizinho / k vizinhos / faixa : O(log n) esperado em baixa dimensao
  *                                  intrinseca (pior caso: O(n))
  *
@@ -53,7 +60,7 @@ typedef enum {
 typedef struct VPNo {
     const void *ponto;        /* ponto de vantagem (vantage point)        */
     double mu;                /* raio de corte (0 em uma folha)           */
-    struct VPNo *interno;     /* elementos com d(ponto, x) <  mu          */
+    struct VPNo *interno;     /* elementos com d(ponto, x) <= mu          */
     struct VPNo *externo;     /* elementos com d(ponto, x) >= mu          */
 } VPNo;
 
@@ -110,7 +117,10 @@ bool vp_remover(VPTree *t, const void *ponto, const void **removido);
 /* Em todas as buscas, se 'calculos' nao for NULL ele recebe o numero de
  * distancias calculadas, para comparar com a busca exaustiva (n). */
 
-/* Busca exata (raio 0): percorre um unico caminho da raiz ate o ponto.
+/* Busca exata (raio 0): percorre um unico caminho da raiz ate o ponto
+ * (os dois lados so sao verificados em um empate exato d == mu).
+ * O ponto e reconhecido por d == 0: a funcao de distancia deve devolver
+ * exatamente 0 para pontos iguais e um valor positivo para diferentes.
  * Retorna o ponto armazenado ou NULL se nao existir. */
 const void *vp_buscar_exato(const VPTree *t, const void *ponto, size_t *calculos);
 
@@ -140,7 +150,7 @@ size_t vp_tamanho(const VPTree *t);
 size_t vp_altura(const VPTree *t);
 
 /* Verifica a propriedade de particao por bola em todos os nos
- * (interno: d < mu, externo: d >= mu) e o tamanho. O(n * altura). */
+ * (interno: d <= mu, externo: d >= mu) e o tamanho. O(n * altura). */
 bool vp_valida(const VPTree *t);
 
 /* Imprime a arvore em formato hierarquico (int = interno, ext = externo). */
